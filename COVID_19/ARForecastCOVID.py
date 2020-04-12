@@ -21,11 +21,13 @@ cols = ['N', 'low95N', 'high95N','R', 'low95R', 'high95R', 'D', 'low95D', 'high9
 for col in cols:
     predictions[col] = np.nan
 
+predictions['Province/State'] = predictions['Country']
 
 def embed_ts(data, countries, h, num_lags):
 ### TODO: output test point for algorithm 
     embedding1 = []
     embedding2 = []
+    embedding3 = []
     for country in countries:
         df = data[data['Country/Region'] == country].groupby('Date').sum()
         cntry_vals = np.repeat(country, repeats=len(df)).reshape((-1, 1))
@@ -41,11 +43,14 @@ def embed_ts(data, countries, h, num_lags):
         deaths = df.Deaths
         x1 = []
         x2 = []
+        x3 = []
         x1.append(confirmed.values.reshape((-1, 1)))
         x2.append(deaths.values.reshape((-1, 1)))
+        x3.append(recovered.values.reshape((-1, 1)))
         for i in range(num_lags):
             x1.append(confirmed.shift(h+i, fill_value=0).values.reshape((-1, 1)))
             x2.append(deaths.shift(h+i, fill_value=0).values.reshape((-1, 1)))
+            x3.append(recovered.shift(h+i, fill_value=0).values.reshape((-1, 1)))
         #stacks the data columnwise
         x1 = np.hstack(x1)
         x1 = np.append(x1, time, axis=1)
@@ -56,6 +61,11 @@ def embed_ts(data, countries, h, num_lags):
         x2 = np.append(x2, time, axis=1)
         x2 = np.append(x2, cntry_vals, axis=1)
         embedding2.append(x2)
+        
+        x3 = np.hstack(x3)
+        x3 = np.append(x3, time, axis=1)
+        x3 = np.append(x3, cntry_vals, axis=1)
+        embedding3.append(x3)
     
     
     ohe_map = dict()
@@ -86,7 +96,16 @@ def embed_ts(data, countries, h, num_lags):
     y2 = X2[:,0].astype(float)
     X2 = X2[:,1:].astype(float)
     
-    return(X1, y1, X2, y2, time, ohe_map)
+    #create design matrix for deaths
+    X3 = np.vstack(embedding3)    #form design matrix
+    X3 = np.delete(X3, X3.shape[1]-2, axis=1) #delete time column from X2
+    cats = pd.get_dummies(X3[:,-1]).astype(int)
+    X3 = X3[:,:-1]    #remove country strings from X2
+    X3 = np.hstack([X3, cats])
+    y3 = X3[:,0].astype(float)
+    X3 = X3[:,1:].astype(float)
+    
+    return(X1, y1, X2, y2, X3, y3, time, ohe_map)
 
 
 def make_test_point(X, y, countries, ohe_map, num_lags):
@@ -145,22 +164,25 @@ def smooth_step(A, C, z, P, t, states, covs, delta):
             
 #%% Data Preprocessing
      
-num_lags = 5
-h = 2
+num_lags = 4
+h = 7
 country_list = predictions.Country.unique()
-X1, y1, X2, y2, time, ohe_map = embed_ts(data, country_list, h, num_lags)
+X1, y1, X2, y2, X3, y3, time, ohe_map = embed_ts(data, country_list, h, num_lags)
 
 
 #%% learning algorithm
 from torch.distributions import MultivariateNormal as mvn
 
-for i in range(1, 3):
+for i in range(1, 4):
     if i == 1:
         X = X1
         y = y1
     if i == 2:
         X = X2
         y = y2
+    if i == 3:
+        X = X3
+        y = y3
         
     test = make_test_point(X, y, country_list, ohe_map, num_lags)
     
@@ -250,11 +272,23 @@ for i in range(1, 3):
                 break
 
 
+#%% Validation Procedure
+
+
+
+
+#%% Generate Forecast
+
+
+
+
+
+
     #generate predictive distribution
     C = torch.tensor(test).float()
     yhat_, S_ = posterior_predict(C, R, states[-1], covs[-1])
     
-    samples = mvn(loc=yhat_.view(-1), covariance_matrix=S_).rsample((1000,))
+    samples = mvn(loc=yhat_.view(-1), covariance_matrix=S_).rsample((10000,))
     pred_mean = samples.mean(axis=0)
     pred_std = samples.std(axis=0)
     
@@ -262,7 +296,7 @@ for i in range(1, 3):
     for j, country in enumerate(country_list):
         pred = int(pred_mean[j].item())
         std = int(pred_std[j].item())
-        date = datetime.now() + timedelta(2)
+        date = datetime.now() + timedelta(h)
         date = date.strftime('%Y-%m-%d')
         predictions.loc[predictions.Country == country, 'Target/Date'] = date
         
@@ -270,10 +304,14 @@ for i in range(1, 3):
             predictions.loc[predictions.Country == country, 'N'] = pred
             predictions.loc[predictions.Country == country, 'low95N'] = pred - 2*std
             predictions.loc[predictions.Country == country, 'high95N'] = pred + 2*std
-        else:
+        if i == 2:
             predictions.loc[predictions.Country == country, 'D'] = pred
             predictions.loc[predictions.Country == country, 'low95D'] = pred - 2*std
             predictions.loc[predictions.Country == country, 'high95D'] = pred + 2*std
+        else:
+            predictions.loc[predictions.Country == country, 'R'] = pred
+            predictions.loc[predictions.Country == country, 'low95R'] = pred - 2*std
+            predictions.loc[predictions.Country == country, 'high95R'] = pred + 2*std
 
 
 predictions['N'] = predictions.N.astype(int)
@@ -282,9 +320,30 @@ predictions['high95N'] = predictions.high95N.astype(int)
 predictions['D'] = predictions.D.astype(int)
 predictions['low95D'] = predictions.low95D.astype(int)
 predictions['high95D'] = predictions.high95D.astype(int)
+predictions['R'] = predictions.R.astype(int)
+predictions['low95R'] = predictions.low95R.astype(int)
+predictions['high95R'] = predictions.high95R.astype(int)
 
-path = r"C:\Users\acros\.spyder-py3\\" + "2day_prediction_" + date + ".csv"
-predictions.to_csv(path)
+#very basic mortality estimates
+for country in country_list:
+    R = predictions[predictions['Country'] == country].R
+    D = predictions[predictions['Country'] == country].D
+    predictions.loc[predictions.Country == country, 'M'] = D / (D + R)
+    
+    R = predictions[predictions['Country'] == country].high95R
+    D = predictions[predictions['Country'] == country].low95D
+    predictions.loc[predictions.Country == country, 'low95M'] = D / (D + R)
+    
+    R = predictions[predictions['Country'] == country].low95R
+    D = predictions[predictions['Country'] == country].high95D
+    predictions.loc[predictions.Country == country, 'high95M'] = D / (D + R)
+    
+
+
+
+
+path = r"C:\Users\acros\.spyder-py3\\" + str(h) + "day_prediction_" + date + ".csv"
+predictions.to_csv(path, index=False, columns=predictions.columns)
 
 
 
