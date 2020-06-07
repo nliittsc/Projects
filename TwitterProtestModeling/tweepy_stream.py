@@ -12,11 +12,10 @@ from datetime import datetime
 import os
 import json # The API returns JSON formatted text
 
-consumer_key = 'dmj06Gkzb4apf9lRxBQy4SUwn'
-consumer_secret = 'rNtOijOp8m4oXY4UI0JWpt5UPVZxeqK8kBoPVhNWvYKpXQWHqc'
-access_token = '1085381489435435008-rk5AgKERpD23mwTh6nvtLBsZAi0bJb'
-access_token_secret = 'Kz53NJ69cY3w003xHHxK3TVaNYn2IydL0ed8zXx0d3Qdj'
-
+consumer_key = '###################'
+consumer_secret = '###################'
+access_token = '###################'
+access_token_secret = '###################'
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
 auth.set_access_token(access_token, access_token_secret)
 
